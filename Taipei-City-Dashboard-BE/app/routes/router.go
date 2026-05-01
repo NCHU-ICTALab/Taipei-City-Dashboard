@@ -41,6 +41,7 @@ func ConfigureRoutes() {
 	configureContributorRoutes()
 	configureChatLogRoutes()
 	configureAIRoutes()
+	configureIsochroneRoutes()
 }
 
 func configureAuthRoutes() {
@@ -205,6 +206,15 @@ func configureAIRoutes() {
 	aiRoutes.Use(middleware.IsLoggedIn())
 	{
 		aiRoutes.POST("/chat/twai", controllers.ChatWithTWCC)
+	}
+}
+
+func configureIsochroneRoutes() {
+	isoRoutes := RouterGroup.Group("/isochrone")
+	isoRoutes.Use(middleware.LimitAPIRequests(global.ComponentLimitAPIRequestsTimes, global.LimitRequestsDuration))
+	isoRoutes.Use(middleware.LimitTotalRequests(global.ComponentLimitTotalRequestsTimes, global.LimitRequestsDuration))
+	{
+		isoRoutes.GET("/", controllers.GetIsochrone)
 	}
 }
 

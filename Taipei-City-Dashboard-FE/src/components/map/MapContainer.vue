@@ -13,6 +13,7 @@ import AddViewPoint from "../dialogs/AddViewPoint.vue";
 import MobileLayers from "../dialogs/MobileLayers.vue";
 import IncidentReport from "../dialogs/IncidentReport.vue";
 import FindClosestPoint from "../dialogs/FindClosestPoint.vue";
+import IsochronePanel from "../dialogs/IsochronePanel.vue";
 import { savedLocations } from "../../assets/configs/mapbox/savedLocations.js";
 
 const authStore = useAuthStore();
@@ -123,6 +124,18 @@ onMounted(() => {
           近
         </button>
         <button
+          :style="{
+            color: mapStore.isochroneState.visible
+              ? 'var(--color-highlight)'
+              : 'var(--color-component-background)',
+          }"
+          title="通勤圈分析"
+          type="button"
+          @click="dialogStore.showDialog('isochronePanel')"
+        >
+          圈
+        </button>
+        <button
           class="show-if-mobile"
           @click="dialogStore.showDialog('mobileLayers')"
         >
@@ -147,6 +160,7 @@ onMounted(() => {
       <MobileLayers :key="contentStore.currentDashboard.index" />
       <IncidentReport />
       <FindClosestPoint />
+      <IsochronePanel />
     </div>
 
     <div class="mapcontainer-controls hide-if-mobile">

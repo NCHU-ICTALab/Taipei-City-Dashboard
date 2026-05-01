@@ -121,6 +121,8 @@ var (
 		MaxRetry:      getIntEnv("TWCC_MAX_RETRY", 2),
 		MaxConcurrent: getIntEnv("TWCC_MAX_CONCURRENT", 100),
 	}
+
+	MapboxToken = getEnv("MAPBOX_ACCESS_TOKEN", "")
 	
 	LMSession *ort.DynamicSession[int64, float32]
 	LMTokenizer *tokenizer.Tokenizer

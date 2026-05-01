@@ -44,6 +44,7 @@ services:
     container_name: dashboard-be
     restart: always
     environment:
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN}
       GIN_MODE: ${GIN_MODE}
       GIN_DOMAIN: ${GIN_DOMAIN}
       GIN_PORT: ${GIN_PORT:-8080}

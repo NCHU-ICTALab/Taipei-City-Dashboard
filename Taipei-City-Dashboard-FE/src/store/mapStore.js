@@ -95,6 +95,14 @@ export const useMapStore = defineStore("map", {
 		layerUpdateTime: {
 			// [layerId]: Date
 		},
+		// Isochrone 通勤圈分析狀態
+		isochroneState: {
+			isLoading: false,
+			origin: null,
+			profile: "driving-traffic",
+			minutes: [15, 30, 45, 60],
+			visible: false,
+		},
 	}),
 	actions: {
 		/* Initialize Mapbox */
@@ -2584,6 +2592,77 @@ export const useMapStore = defineStore("map", {
 			this.currentVisibleLayers = [];
 			this.removePopup();
 			this.tempMarkerCoordinates = null;
+		},
+
+		/* Isochrone 通勤圈分析 */
+		async addIsochroneOverlay({ lng, lat, profile, minutes, colors }) {
+			if (!this.map) return;
+			const COLORS = colors ?? ["2ecc71", "f1c40f", "e67e22", "e74c3c"];
+			const url =
+				`/api/dev/isochrone/?profile=${profile}&lng=${lng}&lat=${lat}` +
+				`&minutes=${minutes.join(",")}` +
+				`&colors=${COLORS.join(",")}`;
+
+			this.isochroneState.isLoading = true;
+			try {
+				const geojson = await fetch(url).then((r) => r.json());
+				// 外圈先畫，內圈後畫，避免外圈蓋住內圈
+				geojson.features.reverse();
+				this.removeIsochroneOverlay();
+				const addLayers = () => {
+					this.map.addSource("isochrone-src", {
+						type: "geojson",
+						data: geojson,
+					});
+					this.map.addLayer({
+						id: "isochrone-fill",
+						type: "fill",
+						source: "isochrone-src",
+						paint: {
+							"fill-color": ["get", "color"],
+							"fill-opacity": 0.25,
+						},
+					});
+					this.map.addLayer({
+						id: "isochrone-line",
+						type: "line",
+						source: "isochrone-src",
+						paint: {
+							"line-color": ["get", "color"],
+							"line-width": 2,
+						},
+					});
+					this.isochroneState.visible = true;
+				};
+				if (this.map.isStyleLoaded()) {
+					addLayers();
+				} else {
+					this.map.once("style.load", addLayers);
+				}
+			} catch (e) {
+				console.error("Isochrone fetch failed:", e);
+			} finally {
+				this.isochroneState.isLoading = false;
+			}
+		},
+		removeIsochroneOverlay() {
+			if (!this.map) return;
+			if (this.map.getLayer("isochrone-fill"))
+				this.map.removeLayer("isochrone-fill");
+			if (this.map.getLayer("isochrone-line"))
+				this.map.removeLayer("isochrone-line");
+			if (this.map.getSource("isochrone-src"))
+				this.map.removeSource("isochrone-src");
+			this.isochroneState.visible = false;
+		},
+		toggleIsochroneVisibility() {
+			if (!this.map) return;
+			const vis = this.isochroneState.visible ? "none" : "visible";
+			if (this.map.getLayer("isochrone-fill"))
+				this.map.setLayoutProperty("isochrone-fill", "visibility", vis);
+			if (this.map.getLayer("isochrone-line"))
+				this.map.setLayoutProperty("isochrone-line", "visibility", vis);
+			this.isochroneState.visible = !this.isochroneState.visible;
 		},
 	},
 });

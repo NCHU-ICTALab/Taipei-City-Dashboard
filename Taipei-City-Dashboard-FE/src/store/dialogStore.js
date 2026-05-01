@@ -44,6 +44,7 @@ export const useDialogStore = defineStore("dialog", {
 			addPin: false,
 			addViewPoint: false,
 			findClosestPoint: false,
+			isochronePanel: false,
 		},
 		// Stores the content for notifications
 		notification: {
