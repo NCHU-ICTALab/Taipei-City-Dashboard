@@ -806,6 +806,108 @@ def geocode_all(
     return out
 
 
+# ── Step 4: 寫入 PostgreSQL ────────────────────────────────────────────────────
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS public.parking_rate_tpe (
+    ogc_fid              SERIAL           PRIMARY KEY,
+    source               VARCHAR(10)      NOT NULL,
+    city                 VARCHAR(20)      NOT NULL,
+    district             VARCHAR(20)      NOT NULL,
+    road_segment         TEXT             NOT NULL,
+    segment_endpoints    TEXT,
+    weekday_rate         INTEGER,
+    saturday_rate        INTEGER,
+    sunday_rate          INTEGER,
+    holiday_rate         INTEGER,
+    weekday_start_time   TIME,
+    weekday_end_time     TIME,
+    saturday_start_time  TIME,
+    saturday_end_time    TIME,
+    sunday_start_time    TIME,
+    sunday_end_time      TIME,
+    holiday_start_time   TIME,
+    holiday_end_time     TIME,
+    weekday_hours_text   TEXT,
+    saturday_hours_text  TEXT,
+    sunday_hours_text    TEXT,
+    holiday_hours_text   TEXT,
+    tiered_rates         JSONB,
+    rate_schedule        JSONB,
+    rate_text            TEXT,
+    start_lat            DOUBLE PRECISION NOT NULL,
+    start_lon            DOUBLE PRECISION NOT NULL,
+    geometry_path        JSONB            NOT NULL,
+    geom_source          VARCHAR(25)      NOT NULL,
+    data_time            TIMESTAMPTZ      DEFAULT CURRENT_TIMESTAMP,
+    _ctime               TIMESTAMPTZ      DEFAULT CURRENT_TIMESTAMP,
+    _mtime               TIMESTAMPTZ      DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+INSERT_SQL = """
+INSERT INTO public.parking_rate_tpe (
+    source, city, district, road_segment, segment_endpoints,
+    weekday_rate, saturday_rate, sunday_rate, holiday_rate,
+    weekday_start_time, weekday_end_time,
+    saturday_start_time, saturday_end_time,
+    sunday_start_time, sunday_end_time,
+    holiday_start_time, holiday_end_time,
+    weekday_hours_text, saturday_hours_text, sunday_hours_text, holiday_hours_text,
+    tiered_rates, rate_schedule, rate_text,
+    start_lat, start_lon, geometry_path, geom_source,
+    data_time, _mtime
+) VALUES (
+    %(source)s, %(city)s, %(district)s, %(road_segment)s, %(segment_endpoints)s,
+    %(weekday_rate)s, %(saturday_rate)s, %(sunday_rate)s, %(holiday_rate)s,
+    %(weekday_start_time)s, %(weekday_end_time)s,
+    %(saturday_start_time)s, %(saturday_end_time)s,
+    %(sunday_start_time)s, %(sunday_end_time)s,
+    %(holiday_start_time)s, %(holiday_end_time)s,
+    %(weekday_hours_text)s, %(saturday_hours_text)s, %(sunday_hours_text)s, %(holiday_hours_text)s,
+    %(tiered_rates_json)s, %(rate_schedule_json)s, %(rate_text)s,
+    %(start_lat)s, %(start_lon)s, %(geometry_path_json)s, %(geom_source)s,
+    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+"""
+
+
+def _to_db_row(rec: dict) -> dict:
+    """Convert in-memory record into the param dict for INSERT_SQL (JSONB serialised)."""
+    out = dict(rec)
+    out["tiered_rates_json"]  = json.dumps(rec.get("tiered_rates"),  ensure_ascii=False) if rec.get("tiered_rates")  is not None else None
+    out["rate_schedule_json"] = json.dumps(rec.get("rate_schedule"), ensure_ascii=False) if rec.get("rate_schedule") is not None else None
+    out["geometry_path_json"] = json.dumps(rec.get("geometry_path"), ensure_ascii=False)
+    return out
+
+
+def save_to_postgres(records: list[dict]) -> None:
+    """CREATE TABLE IF NOT EXISTS → TRUNCATE → batch INSERT. Drops records missing
+    required NOT NULL fields (district / start_lat / start_lon / geometry_path / geom_source)."""
+    valid = [
+        r for r in records
+        if r.get("district") and r.get("start_lat") is not None and r.get("start_lon") is not None
+        and r.get("geometry_path") and r.get("geom_source")
+    ]
+    if not valid:
+        log.error("[PostgreSQL] no valid records to write (all dropped by NOT NULL check)")
+        raise SystemExit(1)
+    if len(valid) < len(records):
+        log.warning("[PostgreSQL] dropped %d records missing NOT NULL fields", len(records) - len(valid))
+
+    log.info("[PostgreSQL] 連線中 ...")
+    conn = psycopg2.connect(**PG_DASHBOARD)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(CREATE_TABLE_SQL)
+                cur.execute("TRUNCATE TABLE public.parking_rate_tpe RESTART IDENTITY")
+                payload = [_to_db_row(r) for r in valid]
+                execute_batch(cur, INSERT_SQL, payload, page_size=500)
+        log.info("[PostgreSQL] 寫入完成（覆蓋 %d 筆）", len(valid))
+    finally:
+        conn.close()
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -1019,10 +1121,40 @@ if __name__ == "__main__":
                         help="Run inline helper smoke tests and exit.")
     parser.add_argument("--with-network", action="store_true",
                         help="Also exercise live HTTP smoke checks.")
+    parser.add_argument("--with-db", action="store_true",
+                        help="Smoke-test save_to_postgres (writes 1 fake row + verify + exit).")
     args = parser.parse_args()
 
     if args.smoke_test:
         _smoke_test_helpers(with_network=args.with_network)
+        raise SystemExit(0)
+
+    if args.with_db:
+        fake = [{
+            "source": "NTPC", "city": "新北市", "district": "板橋區",
+            "road_segment": "__SMOKE_TEST__", "segment_endpoints": None,
+            "weekday_rate": 30, "saturday_rate": None, "sunday_rate": None, "holiday_rate": None,
+            "weekday_start_time": dtime(7, 0), "weekday_end_time": dtime(20, 0),
+            "saturday_start_time": None, "saturday_end_time": None,
+            "sunday_start_time": None,   "sunday_end_time": None,
+            "holiday_start_time": None,  "holiday_end_time": None,
+            "weekday_hours_text": "07:00~20:00", "saturday_hours_text": None,
+            "sunday_hours_text": None,   "holiday_hours_text": None,
+            "tiered_rates": None,
+            "rate_schedule": {"weekday": {"charging": True, "hours_text": "07:00~20:00",
+                                          "rate": 30, "tiers": None}},
+            "rate_text": "30元/時",
+            "start_lat": 25.0, "start_lon": 121.5,
+            "geometry_path": [[25.0, 121.5]],
+            "geom_source": "NOMINATIM_FALLBACK",
+        }]
+        save_to_postgres(fake)
+        with psycopg2.connect(**PG_DASHBOARD) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*), min(road_segment) FROM public.parking_rate_tpe")
+                count, road = cur.fetchone()
+        assert count == 1 and road == "__SMOKE_TEST__", (count, road)
+        log.info("[OK] save_to_postgres smoke test passed.")
         raise SystemExit(0)
 
     print("[NOOP] Full pipeline implemented in Task 9 onward.")
