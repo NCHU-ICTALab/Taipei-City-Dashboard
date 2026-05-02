@@ -505,6 +505,126 @@ def query_overpass(road: str, city: str, district: str | None) -> list[list[floa
     return coords or None
 
 
+# ── Nominatim forward + reverse ───────────────────────────────────────────────
+def _make_nominatim() -> tuple:
+    """Return (forward_fn, reverse_fn) — both rate-limited Nominatim callables."""
+    geolocator = Nominatim(user_agent=USER_AGENT, timeout=NOMINATIM_TIMEOUT)
+    forward = RateLimiter(
+        geolocator.geocode,
+        min_delay_seconds=NOMINATIM_DELAY_SEC,
+        error_wait_seconds=2.0,
+        max_retries=2,
+        swallow_exceptions=True,
+    )
+    reverse = RateLimiter(
+        geolocator.reverse,
+        min_delay_seconds=NOMINATIM_DELAY_SEC,
+        error_wait_seconds=2.0,
+        max_retries=2,
+        swallow_exceptions=True,
+    )
+    return forward, reverse
+
+
+_DISTRICT_ADDRESS_KEYS = ("city_district", "suburb", "district", "borough", "town", "village")
+
+
+def _extract_district(address: dict | None) -> str | None:
+    """Pick first value ending with '區' from a Nominatim address dict."""
+    if not address:
+        return None
+    for key in _DISTRICT_ADDRESS_KEYS:
+        v = address.get(key)
+        if v and isinstance(v, str) and v.endswith("區"):
+            return v
+    # Fallback: any value ending with 區
+    for v in address.values():
+        if isinstance(v, str) and v.endswith("區"):
+            return v
+    return None
+
+
+def reverse_geocode_district(lat: float, lon: float, reverse_fn) -> str | None:
+    """Reverse geocode (lat, lon) -> Taiwanese district name like '大安區', or None."""
+    try:
+        loc = reverse_fn((lat, lon), language="zh-TW", exactly_one=True)
+    except Exception as exc:
+        log.warning("[Reverse] (%s,%s) error: %s", lat, lon, exc)
+        return None
+    if loc is None or not getattr(loc, "raw", None):
+        return None
+    return _extract_district(loc.raw.get("address"))
+
+
+def _nominatim_forward(query: str, forward_fn) -> tuple[float | None, float | None, dict | None]:
+    """Run forward geocode with addressdetails. Returns (lat, lon, address_dict) or (None, None, None)."""
+    try:
+        loc = forward_fn(query, addressdetails=True, exactly_one=True, language="zh-TW")
+    except Exception as exc:
+        log.warning("[Nominatim] forward %s error: %s", query, exc)
+        return (None, None, None)
+    if loc is None:
+        return (None, None, None)
+    return (loc.latitude, loc.longitude, (loc.raw or {}).get("address"))
+
+
+def geocode_one(rec: dict, forward_fn, reverse_fn) -> bool:
+    """Fill rec['start_lat'/'start_lon'/'geometry_path'/'geom_source'] in place.
+    For TPE records (district is None on entry), also fills rec['district'].
+
+    NTPC strategy (district known): Overpass(district) → fallback forward Nominatim.
+    TPE strategy (district unknown): forward Nominatim first → extract district →
+        refine with Overpass(district) if district found.
+
+    Returns True if geometry + district both obtained, False otherwise."""
+    city = rec["city"]
+    road = rec["road_segment"]
+    district = rec.get("district")
+
+    if district:
+        # NTPC path
+        coords = query_overpass(road, city, district)
+        geom_source = "OVERPASS" if coords else None
+        if coords is None:
+            query = f"{road}, {district}, {city}, Taiwan"
+            lat, lon, _addr = _nominatim_forward(query, forward_fn)
+            if lat is None:
+                return False
+            coords = [[lat, lon]]
+            geom_source = "NOMINATIM_FALLBACK"
+    else:
+        # TPE path: forward Nominatim first to discover district + cheap coords
+        query = f"{road}, {city}, Taiwan"
+        lat, lon, address = _nominatim_forward(query, forward_fn)
+        if lat is None:
+            return False
+
+        derived_district = _extract_district(address)
+        if derived_district is None:
+            # Reverse geocode as a backup if forward did not give district
+            derived_district = reverse_geocode_district(lat, lon, reverse_fn)
+        if derived_district is None:
+            log.warning("[Geocode] cannot resolve district for %s / %s", city, road)
+            return False
+        district = derived_district
+        rec["district"] = district
+
+        # Now refine geometry with Overpass(district) — best effort
+        refined = query_overpass(road, city, district)
+        if refined and len(refined) >= 2:
+            coords = refined
+            geom_source = "OVERPASS"
+        else:
+            coords = [[lat, lon]]
+            geom_source = "NOMINATIM_FALLBACK"
+
+    rec["start_lat"]     = coords[0][0]
+    rec["start_lon"]     = coords[0][1]
+    rec["geometry_path"] = coords
+    rec["geom_source"]   = geom_source
+    return True
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -635,11 +755,29 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
         log.info("[OK] Overpass with-district smoke test passed (%d nodes).", len(coords))
         time.sleep(OVERPASS_DELAY_SEC)
 
-        # Overpass city-only (TPE-style without district)
-        coords2 = query_overpass("信義路四段", "臺北市", None)
-        assert coords2 is not None and len(coords2) >= 2, \
-            f"Overpass city-only should return polyline for 信義路四段, got {coords2}"
-        log.info("[OK] Overpass city-only smoke test passed (%d nodes).", len(coords2))
+        # geocode_one — NTPC-style (district given)
+        forward, reverse = _make_nominatim()
+        ntpc_sample = {
+            "city": "臺北市", "district": "大安區", "road_segment": "信義路四段",
+        }
+        ok = geocode_one(ntpc_sample, forward, reverse)
+        assert ok, "geocode_one NTPC-style failed"
+        assert ntpc_sample["geom_source"] in ("OVERPASS", "NOMINATIM_FALLBACK")
+        assert ntpc_sample["district"] == "大安區"
+        log.info("[OK] geocode_one NTPC-style passed (source=%s, points=%d).",
+                 ntpc_sample["geom_source"], len(ntpc_sample["geometry_path"]))
+        time.sleep(OVERPASS_DELAY_SEC)
+
+        # geocode_one — TPE-style (district resolved by reverse geocode)
+        tpe_sample = {
+            "city": "臺北市", "district": None, "road_segment": "信義路四段",
+        }
+        ok = geocode_one(tpe_sample, forward, reverse)
+        assert ok, "geocode_one TPE-style failed"
+        assert tpe_sample["district"] and tpe_sample["district"].endswith("區"), \
+            f"reverse geocode should fill district, got {tpe_sample['district']!r}"
+        log.info("[OK] geocode_one TPE-style passed (district=%s, source=%s).",
+                 tpe_sample["district"], tpe_sample["geom_source"])
         time.sleep(OVERPASS_DELAY_SEC)
 
     print("[OK] All helper smoke tests passed.")
