@@ -2640,6 +2640,7 @@ export const useMapStore = defineStore("map", {
 			this.isochroneState.isLoading = true;
 			try {
 				const geojson = await fetch(url).then((r) => r.json());
+				if (!geojson?.features?.length) throw new Error("Isochrone API error");
 				// 外圈先畫，內圈後畫，避免外圈蓋住內圈
 				geojson.features.reverse();
 				this.removeIsochroneOverlay();
