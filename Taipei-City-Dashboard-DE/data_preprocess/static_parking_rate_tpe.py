@@ -9,11 +9,13 @@ Pipeline: crawl_ntpc + crawl_tpe -> preprocess -> geocode_all -> save_to_postgre
 更新模式：TRUNCATE + INSERT（保留 schema）
 """
 import argparse
+import csv
 import json
 import logging
 import re
 import time
 from datetime import time as dtime
+from pathlib import Path
 
 import psycopg2
 import requests
@@ -625,6 +627,185 @@ def geocode_one(rec: dict, forward_fn, reverse_fn) -> bool:
     return True
 
 
+# ── CSV checkpoint helpers ────────────────────────────────────────────────────
+CSV_DEFAULT_PATH = Path(__file__).parent / "parking_rate_tpe_geocoded.csv"
+
+CSV_FIELDS = [
+    "source", "city", "district", "road_segment", "segment_endpoints",
+    "weekday_rate", "saturday_rate", "sunday_rate", "holiday_rate",
+    "weekday_start_time", "weekday_end_time",
+    "saturday_start_time", "saturday_end_time",
+    "sunday_start_time", "sunday_end_time",
+    "holiday_start_time", "holiday_end_time",
+    "weekday_hours_text", "saturday_hours_text", "sunday_hours_text", "holiday_hours_text",
+    "tiered_rates", "rate_schedule", "rate_text",
+    "start_lat", "start_lon", "geometry_path", "geom_source",
+]
+
+_TIME_FIELDS = {f for f in CSV_FIELDS if f.endswith("_start_time") or f.endswith("_end_time")}
+_JSON_FIELDS = {"tiered_rates", "rate_schedule", "geometry_path"}
+_INT_FIELDS  = {"weekday_rate", "saturday_rate", "sunday_rate", "holiday_rate"}
+_FLOAT_FIELDS = {"start_lat", "start_lon"}
+
+
+def _serialise(field: str, value) -> str:
+    if value is None:
+        return ""
+    if field in _TIME_FIELDS:
+        return value.isoformat() if hasattr(value, "isoformat") else str(value)
+    if field in _JSON_FIELDS:
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _deserialise(field: str, raw: str):
+    if raw == "":
+        return None
+    if field in _TIME_FIELDS:
+        return dtime.fromisoformat(raw)
+    if field in _JSON_FIELDS:
+        return json.loads(raw)
+    if field in _INT_FIELDS:
+        return int(raw)
+    if field in _FLOAT_FIELDS:
+        return float(raw)
+    return raw
+
+
+def _record_to_csv_row(rec: dict) -> dict:
+    return {f: _serialise(f, rec.get(f)) for f in CSV_FIELDS}
+
+
+def _csv_row_to_record(row: dict) -> dict:
+    return {f: _deserialise(f, row.get(f, "") or "") for f in CSV_FIELDS}
+
+
+def _record_key(rec: dict) -> tuple:
+    """Composite key uniquely identifying a (source row): includes rate_text so that
+    a road segment with two distinct rate configurations is preserved as two rows."""
+    return (
+        rec.get("source") or "",
+        rec.get("city") or "",
+        rec.get("road_segment") or "",
+        rec.get("segment_endpoints") or "",
+        rec.get("rate_text") or "",
+        rec.get("weekday_hours_text") or "",
+    )
+
+
+def load_csv_records(csv_path: Path) -> list[dict]:
+    if not csv_path.exists():
+        return []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        return [_csv_row_to_record(row) for row in reader]
+
+
+# ── Geocode batch with checkpoint + resume ────────────────────────────────────
+def geocode_all(
+    records: list[dict],
+    csv_path: Path | str = CSV_DEFAULT_PATH,
+    resume: bool = True,
+) -> list[dict]:
+    """Geocode all records sequentially. Append each successful record to CSV immediately.
+    On resume=True (default) skips records already present in the CSV (matched by
+    composite key) and reuses cached geometry within the run."""
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    done_records: list[dict] = []
+    done_keys: set[tuple] = set()
+    geometry_cache: dict[tuple, tuple] = {}
+
+    if resume and csv_path.exists():
+        done_records = load_csv_records(csv_path)
+        done_keys = {_record_key(r) for r in done_records}
+        for r in done_records:
+            gkey = (r.get("city") or "", r.get("road_segment") or "", r.get("segment_endpoints") or "")
+            if gkey not in geometry_cache and r.get("geometry_path"):
+                geometry_cache[gkey] = (r["geometry_path"], r["geom_source"], r.get("district"))
+        log.info("[Geom] resume: %d records already in %s", len(done_records), csv_path)
+
+    file_exists = csv_path.exists()
+    csv_file = open(csv_path, "a" if (resume and file_exists) else "w", encoding="utf-8", newline="")
+    writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+    if not (resume and file_exists):
+        writer.writeheader()
+        csv_file.flush()
+
+    forward, reverse = _make_nominatim()
+
+    total = len(records)
+    log.info("[Geom] 開始：總計 %d 筆待處理（CSV: %s）", total, csv_path)
+    started = time.time()
+    n_overpass = n_nominatim = n_failed = n_resumed = n_cached = 0
+    out: list[dict] = list(done_records)
+
+    try:
+        for idx, rec in enumerate(records, start=1):
+            key = _record_key(rec)
+            if key in done_keys:
+                n_resumed += 1
+                # idx-aligned progress still printed below
+            else:
+                gkey = (rec.get("city") or "", rec.get("road_segment") or "", rec.get("segment_endpoints") or "")
+                cached = geometry_cache.get(gkey)
+                if cached:
+                    geom, gsource, district = cached
+                    rec["geometry_path"] = geom
+                    rec["start_lat"]     = geom[0][0]
+                    rec["start_lon"]     = geom[0][1]
+                    rec["geom_source"]   = gsource
+                    if rec.get("district") is None:
+                        rec["district"] = district
+                    n_cached += 1
+                    ok = True
+                else:
+                    ok = geocode_one(rec, forward, reverse)
+                    if ok:
+                        geometry_cache[gkey] = (
+                            rec["geometry_path"], rec["geom_source"], rec["district"],
+                        )
+                        if rec["geom_source"] == "OVERPASS":
+                            n_overpass += 1
+                        else:
+                            n_nominatim += 1
+                    else:
+                        n_failed += 1
+                    # Sleep only when we actually hit the network
+                    time.sleep(OVERPASS_DELAY_SEC)
+
+                if ok:
+                    writer.writerow(_record_to_csv_row(rec))
+                    csv_file.flush()
+                    out.append(rec)
+                    done_keys.add(key)
+
+            if idx % PROGRESS_REPORT_EVERY == 0 or idx == total:
+                elapsed = time.time() - started
+                processed_this_run = max(1, idx - n_resumed)
+                rate = processed_this_run / elapsed if elapsed > 0 else 0
+                remaining_records = total - idx
+                remaining_sec = remaining_records / rate if rate > 0 else 0
+                log.info(
+                    "[Geom] %4d/%-4d  Overpass %d  Nomi_fb %d  Cached %d  Resumed %d  Failed %d"
+                    "  進度 %5.1f%%  剩餘 ~%dm%02ds",
+                    idx, total, n_overpass, n_nominatim, n_cached, n_resumed, n_failed,
+                    100.0 * idx / total,
+                    int(remaining_sec // 60), int(remaining_sec % 60),
+                )
+    finally:
+        csv_file.close()
+
+    elapsed = time.time() - started
+    log.info(
+        "[Geom] 完成：%d 筆有效（resumed %d / cached %d / new Overpass %d / new Nomi_fb %d / failed %d），耗時 %dm%02ds",
+        len(out), n_resumed, n_cached, n_overpass, n_nominatim, n_failed,
+        int(elapsed // 60), int(elapsed % 60),
+    )
+    return out
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -729,6 +910,18 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
     }
     assert preprocess([empty_tpe]) == [], "empty TPE row should be dropped"
 
+    # CSV round-trip on a synthetic geocoded record
+    sample_rec = preprocess([ntpc_row])[0]
+    sample_rec["start_lat"] = 25.0142
+    sample_rec["start_lon"] = 121.4631
+    sample_rec["geometry_path"] = [[25.0142, 121.4631], [25.0148, 121.4640]]
+    sample_rec["geom_source"] = "OVERPASS"
+    csv_row = _record_to_csv_row(sample_rec)
+    round_tripped = _csv_row_to_record(csv_row)
+    for f in CSV_FIELDS:
+        a, b = sample_rec.get(f), round_tripped.get(f)
+        assert a == b, f"CSV roundtrip mismatch for {f}: in={a!r} out={b!r}"
+
     if with_network:
         rows = crawl_ntpc()
         assert len(rows) > 100, f"NTPC crawl returned too few rows: {len(rows)}"
@@ -779,6 +972,43 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
         log.info("[OK] geocode_one TPE-style passed (district=%s, source=%s).",
                  tpe_sample["district"], tpe_sample["geom_source"])
         time.sleep(OVERPASS_DELAY_SEC)
+
+        # geocode_all + CSV checkpoint + resume on a tiny sample
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            tmp_csv = Path(td) / "smoke.csv"
+            sample_recs = preprocess([
+                {"_source": "NTPC", "county": "新北市", "area": "板橋區",
+                 "road_name": "大同街", "weekdays_time": "07:00~20:00",
+                 "sat._charging_time": "無收費", "sun._charging_time": "無收費",
+                 "national_holidays_charging_time": "無收費",
+                 "rates": "30元/時"},
+                {"_source": "TPE", "路段名稱": "信義路四段",
+                 "起迄路段": "信義路-基隆路",
+                 "收費時間": "8-20", "費率（元）": "60", "收費日（星期）": "1-7"},
+            ])
+            assert len(sample_recs) == 2
+
+            # Round 1: fresh geocode
+            r1 = geocode_all(sample_recs, csv_path=tmp_csv, resume=False)
+            assert len(r1) == 2, f"first round should geocode both, got {len(r1)}"
+            assert tmp_csv.exists() and tmp_csv.stat().st_size > 0
+            log.info("[OK] geocode_all round 1: %d records written to %s", len(r1), tmp_csv)
+
+            # Round 2: resume — should skip both
+            sample_recs_again = preprocess([
+                {"_source": "NTPC", "county": "新北市", "area": "板橋區",
+                 "road_name": "大同街", "weekdays_time": "07:00~20:00",
+                 "sat._charging_time": "無收費", "sun._charging_time": "無收費",
+                 "national_holidays_charging_time": "無收費",
+                 "rates": "30元/時"},
+                {"_source": "TPE", "路段名稱": "信義路四段",
+                 "起迄路段": "信義路-基隆路",
+                 "收費時間": "8-20", "費率（元）": "60", "收費日（星期）": "1-7"},
+            ])
+            r2 = geocode_all(sample_recs_again, csv_path=tmp_csv, resume=True)
+            assert len(r2) == 2, f"resume should still return 2 records, got {len(r2)}"
+            log.info("[OK] geocode_all resume: skipped both, returned %d", len(r2))
 
     print("[OK] All helper smoke tests passed.")
 
