@@ -440,6 +440,71 @@ def preprocess(rows: list[dict]) -> list[dict]:
     return out
 
 
+# ── Step 3: Geocode ────────────────────────────────────────────────────────────
+OVERPASS_QUERY_WITH_DISTRICT = """
+[out:json][timeout:{timeout}];
+area["name"="{city}"]["admin_level"="4"]->.city;
+area(area.city)["name"="{district}"]["admin_level"="7"]->.district;
+way(area.district)["highway"]["name"="{road}"];
+out geom;
+""".strip()
+
+OVERPASS_QUERY_CITY_ONLY = """
+[out:json][timeout:{timeout}];
+area["name"="{city}"]["admin_level"="4"]->.city;
+way(area.city)["highway"]["name"="{road}"];
+out geom;
+""".strip()
+
+
+def _dedupe_consecutive(coords: list[list[float]]) -> list[list[float]]:
+    """Remove only adjacent duplicates (keeps the polyline shape)."""
+    out: list[list[float]] = []
+    for c in coords:
+        if not out or out[-1] != c:
+            out.append(c)
+    return out
+
+
+def query_overpass(road: str, city: str, district: str | None) -> list[list[float]] | None:
+    """Return [[lat, lon], ...] for the named highway way(s), or None on miss/error.
+    If district is None, search the whole city (used for TPE before reverse geocoding)."""
+    if not road or not city:
+        return None
+
+    if district:
+        query = OVERPASS_QUERY_WITH_DISTRICT.format(
+            timeout=OVERPASS_TIMEOUT, city=city, district=district, road=road
+        )
+    else:
+        query = OVERPASS_QUERY_CITY_ONLY.format(
+            timeout=OVERPASS_TIMEOUT, city=city, road=road
+        )
+    try:
+        res = requests.post(
+            OVERPASS_URL,
+            data={"data": query},
+            headers={"User-Agent": USER_AGENT},
+            timeout=OVERPASS_TIMEOUT + 5,
+        )
+        res.raise_for_status()
+        payload = res.json()
+    except (requests.RequestException, ValueError) as exc:
+        log.warning("[Overpass] %s/%s/%s error: %s", city, district or "*", road, exc)
+        return None
+
+    elements = payload.get("elements", [])
+    if not elements:
+        return None
+
+    coords: list[list[float]] = []
+    for el in elements:
+        for node in el.get("geometry", []):
+            coords.append([node["lat"], node["lon"]])
+    coords = _dedupe_consecutive(coords)
+    return coords or None
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -560,6 +625,22 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
         assert not missing, f"TPE missing critical headers {missing}; got {first_keys}"
         assert rows_tpe[0]["_source"] == "TPE"
         log.info("[OK] TPE crawl smoke test passed (%d rows).", len(rows_tpe))
+
+        # Overpass with district (NTPC-style query)
+        coords = query_overpass("信義路四段", "臺北市", "大安區")
+        assert coords is not None and len(coords) >= 2, \
+            f"Overpass should return polyline for 信義路四段 in 大安區, got {coords}"
+        assert all(120 < c[1] < 122 and 24 < c[0] < 26 for c in coords), \
+            "Overpass coords outside Taiwan bbox"
+        log.info("[OK] Overpass with-district smoke test passed (%d nodes).", len(coords))
+        time.sleep(OVERPASS_DELAY_SEC)
+
+        # Overpass city-only (TPE-style without district)
+        coords2 = query_overpass("信義路四段", "臺北市", None)
+        assert coords2 is not None and len(coords2) >= 2, \
+            f"Overpass city-only should return polyline for 信義路四段, got {coords2}"
+        log.info("[OK] Overpass city-only smoke test passed (%d nodes).", len(coords2))
+        time.sleep(OVERPASS_DELAY_SEC)
 
     print("[OK] All helper smoke tests passed.")
 
