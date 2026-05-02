@@ -1341,6 +1341,15 @@ function handleDataSelection(index) {
 	}
 
 	&--bottom-title {
+		.districtchart-chart {
+			max-height: calc(100% - 5rem);
+
+			svg {
+				max-height: 100%;
+				max-width: 100%;
+			}
+		}
+
 		.districtchart-title {
 			top: auto;
 			bottom: 0;
