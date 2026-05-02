@@ -2,7 +2,7 @@
 
 <script setup>
 /* global gtag */
-import { onMounted, ref, computed, watch } from "vue";
+import { onMounted, ref, computed, watch, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "../../store/authStore";
 import { useContentStore } from "../../store/contentStore";
@@ -13,7 +13,7 @@ import AddViewPoint from "../dialogs/AddViewPoint.vue";
 import MobileLayers from "../dialogs/MobileLayers.vue";
 import IncidentReport from "../dialogs/IncidentReport.vue";
 import FindClosestPoint from "../dialogs/FindClosestPoint.vue";
-import IsochronePanel from "../dialogs/IsochronePanel.vue";
+import MapLayerPanel from "./MapLayerPanel.vue";
 import { savedLocations } from "../../assets/configs/mapbox/savedLocations.js";
 
 const authStore = useAuthStore();
@@ -24,6 +24,21 @@ const route = useRoute();
 
 const districtLayer = ref(false);
 const villageLayer = ref(false);
+const showLayerPanel = ref(false);
+
+// crosshair cursor when user is picking an origin on the map
+watch(
+	() => mapStore.isPickingOrigin,
+	(picking) => {
+		if (mapStore.map) {
+			mapStore.map.getCanvas().style.cursor = picking ? "crosshair" : "";
+		}
+	},
+);
+
+onUnmounted(() => {
+	mapStore.cancelPickingOrigin();
+});
 
 const canUseFindClosestPoint = computed(() => {
 	let pointLayerCount = 0;
@@ -125,13 +140,13 @@ onMounted(() => {
         </button>
         <button
           :style="{
-            color: mapStore.isochroneState.visible
+            color: showLayerPanel
               ? 'var(--color-highlight)'
               : 'var(--color-component-background)',
           }"
-          title="通勤圈分析"
+          title="圖層與通勤圈"
           type="button"
-          @click="dialogStore.showDialog('isochronePanel')"
+          @click="showLayerPanel = !showLayerPanel"
         >
           圈
         </button>
@@ -157,10 +172,10 @@ onMounted(() => {
       >
         !
       </button><!-- The key prop informs vue that the component should be updated when switching dashboards -->
+      <MapLayerPanel v-if="showLayerPanel" />
       <MobileLayers :key="contentStore.currentDashboard.index" />
       <IncidentReport />
       <FindClosestPoint />
-      <IsochronePanel />
     </div>
 
     <div class="mapcontainer-controls hide-if-mobile">

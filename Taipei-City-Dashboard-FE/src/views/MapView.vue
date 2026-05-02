@@ -79,12 +79,7 @@ function handleOpenSettings() {
 // Open and closes the component as well as communicates to the mapStore to turn on and off map layers
 function handleToggle(value, map_config) {
 	if (!map_config[0]) {
-		if (value) {
-			dialogStore.showNotification(
-				"info",
-				"本組件沒有空間資料，不會渲染地圖",
-			);
-		}
+		// Components like IsochroneTool manage their own map layers
 		return;
 	}
 	if (value) {

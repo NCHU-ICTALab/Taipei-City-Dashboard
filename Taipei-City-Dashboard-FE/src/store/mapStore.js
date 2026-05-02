@@ -103,6 +103,8 @@ export const useMapStore = defineStore("map", {
 			minutes: [15, 30, 45, 60],
 			visible: false,
 		},
+		// 地圖點選起點模式
+		isPickingOrigin: false,
 	}),
 	actions: {
 		/* Initialize Mapbox */
@@ -140,6 +142,17 @@ export const useMapStore = defineStore("map", {
 					this.initializeBasicLayers();
 				})
 				.on("click", (event) => {
+					if (this.isPickingOrigin) {
+						this.isPickingOrigin = false;
+						if (this._originPickCallback) {
+							this._originPickCallback({
+								lng: event.lngLat.lng,
+								lat: event.lngLat.lat,
+							});
+							this._originPickCallback = null;
+						}
+						return;
+					}
 					if (this.popup) {
 						this.popup = null;
 					}
@@ -2595,6 +2608,27 @@ export const useMapStore = defineStore("map", {
 		},
 
 		/* Isochrone 通勤圈分析 */
+		startPickingOrigin(callback) {
+			if (!this.map) return;
+			this.isPickingOrigin = true;
+			this._originPickCallback = callback;
+		},
+		cancelPickingOrigin() {
+			this.isPickingOrigin = false;
+			this._originPickCallback = null;
+		},
+		toggleLayerById(layerId, visibility) {
+			if (!this.map || !this.map.getLayer(layerId)) return;
+			this.map.setLayoutProperty(layerId, "visibility", visibility);
+			if (visibility === "visible") {
+				if (!this.currentVisibleLayers.includes(layerId))
+					this.currentVisibleLayers.push(layerId);
+			} else {
+				this.currentVisibleLayers = this.currentVisibleLayers.filter(
+					(id) => id !== layerId,
+				);
+			}
+		},
 		async addIsochroneOverlay({ lng, lat, profile, minutes, colors }) {
 			if (!this.map) return;
 			const COLORS = colors ?? ["2ecc71", "f1c40f", "e67e22", "e74c3c"];

@@ -299,7 +299,7 @@ export const useContentStore = defineStore("content", {
 						);
 
 						this.cityDashboard.components[index].chart_data =
-							response.data.data;
+							response.data.data ?? [];
 
 						if (response.data.categories) {
 							this.cityDashboard.components[
@@ -413,7 +413,7 @@ export const useContentStore = defineStore("content", {
 						);
 
 						this.cityDashboard.components[index].chart_data =
-							response.data.data;
+							response.data.data ?? [];
 
 						if (response.data.categories) {
 							this.cityDashboard.components[
@@ -533,7 +533,7 @@ export const useContentStore = defineStore("content", {
 						);
 
 						this.cityDashboard.components[index].chart_data =
-							response.data.data;
+							response.data.data ?? [];
 
 						if (response.data.categories) {
 							this.cityDashboard.components[
