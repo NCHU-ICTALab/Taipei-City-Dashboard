@@ -99,6 +99,37 @@ def parse_time_range(text: str | None) -> tuple[dtime | None, dtime | None]:
     return (min(parsed), max(parsed))
 
 
+# ── Step 1: 爬取 ────────────────────────────────────────────────────────────────
+def crawl_ntpc(page_size: int = 1000) -> list[dict]:
+    """Fetch NTPC parking rate API across all pages. Returns list of dicts tagged _source='NTPC'.
+    Returns [] on HTTP/JSON error (logged as error, does not raise)."""
+    all_rows: list[dict] = []
+    page = 0
+    while True:
+        url = f"{NTPC_API}?page={page}&size={page_size}"
+        log.info("[NTPC] GET page=%d size=%d", page, page_size)
+        try:
+            res = requests.get(url, timeout=60)
+            res.raise_for_status()
+            rows = res.json()
+        except (requests.RequestException, ValueError) as exc:
+            log.error("[NTPC] crawl failed at page %d: %s", page, exc)
+            return [] if not all_rows else all_rows
+        if not isinstance(rows, list):
+            log.error("[NTPC] unexpected response type at page %d: %s", page, type(rows).__name__)
+            return all_rows
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+    for r in all_rows:
+        r["_source"] = "NTPC"
+    log.info("[NTPC] fetched %d rows total", len(all_rows))
+    return all_rows
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -133,6 +164,14 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
     assert parse_time_range(None) == (None, None)
     assert parse_time_range("") == (None, None)
 
+    if with_network:
+        rows = crawl_ntpc()
+        assert len(rows) > 100, f"NTPC crawl returned too few rows: {len(rows)}"
+        assert {"county", "area", "road_name", "rates", "_source"}.issubset(rows[0].keys()), \
+            f"NTPC row missing expected keys: {rows[0].keys()}"
+        assert rows[0]["_source"] == "NTPC"
+        log.info("[OK] NTPC crawl smoke test passed (%d rows).", len(rows))
+
     print("[OK] All helper smoke tests passed.")
 
 
@@ -140,10 +179,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="雙北路邊停車費率資料管線")
     parser.add_argument("--smoke-test", action="store_true",
                         help="Run inline helper smoke tests and exit.")
+    parser.add_argument("--with-network", action="store_true",
+                        help="Also exercise live HTTP smoke checks.")
     args = parser.parse_args()
 
     if args.smoke_test:
-        _smoke_test_helpers()
+        _smoke_test_helpers(with_network=args.with_network)
         raise SystemExit(0)
 
     print("[NOOP] Full pipeline implemented in Task 9 onward.")
