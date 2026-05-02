@@ -130,6 +130,84 @@ def crawl_ntpc(page_size: int = 1000) -> list[dict]:
     return all_rows
 
 
+def _ods_cell_text(cell: TableCell) -> str:
+    """Concatenate all <text:p> contents inside a TableCell."""
+    parts: list[str] = []
+    for p in cell.getElementsByType(P):
+        parts.append("".join(node.data for node in p.childNodes if hasattr(node, "data")))
+    return "\n".join(parts).strip()
+
+
+def _expand_row(tr: TableRow, max_width: int) -> list[str]:
+    """Expand <table:table-cell number-columns-repeated="N"/> into N separate values.
+    Returns at most max_width entries (trims the trailing 16k-empty padding)."""
+    out: list[str] = []
+    for cell in tr.getElementsByType(TableCell):
+        n = int(cell.getAttribute("numbercolumnsrepeated") or 1)
+        text = _ods_cell_text(cell)
+        # Cap pathological repeats; if we already have enough columns, stop early
+        if len(out) >= max_width:
+            break
+        n = min(n, max_width - len(out))
+        out.extend([text] * n)
+    return out
+
+
+def crawl_tpe() -> list[dict]:
+    """Download TPE ODS, parse first sheet. Returns list of dicts tagged _source='TPE'.
+    Returns [] on download / parse error."""
+    import io
+
+    log.info("[TPE]  GET %s", TPE_ODS_URL)
+    try:
+        res = requests.get(TPE_ODS_URL, timeout=60)
+        res.raise_for_status()
+    except requests.RequestException as exc:
+        log.error("[TPE] download failed: %s", exc)
+        return []
+
+    try:
+        doc = load_ods(io.BytesIO(res.content))
+    except Exception as exc:
+        log.error("[TPE] ODS parse failed: %s", exc)
+        return []
+
+    tables = doc.getElementsByType(Table)
+    if not tables:
+        log.error("[TPE] ODS contains no tables")
+        return []
+
+    sheet = tables[0]
+    trs = sheet.getElementsByType(TableRow)
+    if not trs:
+        log.error("[TPE] ODS first sheet has no rows")
+        return []
+
+    # Header (row 0) gives us the canonical width
+    header_cells = _expand_row(trs[0], max_width=64)
+    # Trim trailing blanks in header (the ODS pads to 16k empty cols)
+    while header_cells and not header_cells[-1].strip():
+        header_cells.pop()
+    header = [h.strip() for h in header_cells]
+    width = len(header)
+
+    rows: list[dict] = []
+    for tr in trs[1:]:
+        cells = _expand_row(tr, max_width=width)
+        cells = (cells + [""] * width)[:width]
+        if not any(c.strip() for c in cells):
+            continue
+        rec = {k: v.strip() for k, v in zip(header, cells)}
+        # Need 路段名稱 to be non-empty (skip blank artefacts)
+        if not rec.get("路段名稱"):
+            continue
+        rec["_source"] = "TPE"
+        rows.append(rec)
+
+    log.info("[TPE]  parsed %d rows (header=%s)", len(rows), header)
+    return rows
+
+
 # ── Smoke tests ────────────────────────────────────────────────────────────────
 def _smoke_test_helpers(with_network: bool = False) -> None:
     """Asserts pure helpers behave as documented."""
@@ -171,6 +249,15 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
             f"NTPC row missing expected keys: {rows[0].keys()}"
         assert rows[0]["_source"] == "NTPC"
         log.info("[OK] NTPC crawl smoke test passed (%d rows).", len(rows))
+
+        rows_tpe = crawl_tpe()
+        assert len(rows_tpe) > 50, f"TPE crawl returned too few rows: {len(rows_tpe)}"
+        critical = {"路段名稱", "收費時間", "費率（元）", "收費日（星期）"}
+        first_keys = set(rows_tpe[0].keys())
+        missing = critical - first_keys
+        assert not missing, f"TPE missing critical headers {missing}; got {first_keys}"
+        assert rows_tpe[0]["_source"] == "TPE"
+        log.info("[OK] TPE crawl smoke test passed (%d rows).", len(rows_tpe))
 
     print("[OK] All helper smoke tests passed.")
 
