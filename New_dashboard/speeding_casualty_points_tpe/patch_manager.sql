@@ -22,7 +22,7 @@ VALUES (
     'geojson',
     'big',
     NULL,
-    '{"circle-color":"#EA580C","circle-opacity":0.95,"circle-stroke-color":"#EA580C","circle-stroke-width":0,"cluster-enabled":true,"cluster-radius":60,"cluster-max-zoom":16,"cluster-color":"#F97316","cluster-text-color":"#FFFFFF","cluster-stroke-color":"#7C2D12","cluster-stroke-width":1.5}'::json,
+    '{"circle-color":"#DC2626","circle-opacity":0.95,"circle-stroke-color":"#DC2626","circle-stroke-width":0,"cluster-enabled":true,"cluster-radius":60,"cluster-max-zoom":16,"cluster-color":"#B91C1C","cluster-text-color":"#FFFFFF","cluster-stroke-color":"#7F1D1D","cluster-stroke-width":1.5}'::json,
     '[
         {"key":"district","name":"行政區"},
         {"key":"location_text","name":"地點"},
