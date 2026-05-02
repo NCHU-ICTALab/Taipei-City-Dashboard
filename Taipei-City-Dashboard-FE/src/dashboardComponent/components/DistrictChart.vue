@@ -1344,6 +1344,8 @@ function handleDataSelection(index) {
 		.districtchart-title {
 			top: auto;
 			bottom: 0;
+			margin: 0 0 0.5rem;
+			z-index: 5;
 		}
 	}
 }
