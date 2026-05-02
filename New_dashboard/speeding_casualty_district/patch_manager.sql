@@ -12,11 +12,14 @@
 INSERT INTO public.component_charts (index, color, types, unit)
 VALUES (
     'speeding_casualty_district',
-    '{#FECACA,#FCA5A5,#F87171,#EF4444,#DC2626,#B91C1C,#991B1B,#7F1D1D}',
+    '{#FEF3C7,#FDE68A,#FBBF24,#F97316,#EA580C,#DC2626,#BE123C,#831843}',
     '{DistrictChart}',
     '件'
 )
-ON CONFLICT (index) DO NOTHING;
+ON CONFLICT (index) DO UPDATE SET
+    color = EXCLUDED.color,
+    types = EXCLUDED.types,
+    unit = EXCLUDED.unit;
 
 
 -- ── 2. components ─────────────────────────────────────────────────────────────
