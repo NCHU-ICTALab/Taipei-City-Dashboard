@@ -22,7 +22,7 @@ VALUES (
     'geojson',
     'big',
     NULL,
-    '{"circle-color":"#DC2626","circle-opacity":0.95,"circle-stroke-color":"#7F1D1D","circle-stroke-width":1.8,"cluster-enabled":true,"cluster-radius":42,"cluster-max-zoom":14,"cluster-color":"#B91C1C","cluster-text-color":"#FFFFFF","cluster-stroke-color":"#7F1D1D","cluster-stroke-width":1.5}'::json,
+    '{"circle-color":"#DC2626","circle-opacity":0.95,"circle-stroke-color":"#DC2626","circle-stroke-width":0,"cluster-enabled":true,"cluster-radius":42,"cluster-max-zoom":14,"cluster-color":"#B91C1C","cluster-text-color":"#FFFFFF","cluster-stroke-color":"#7F1D1D","cluster-stroke-width":1.5}'::json,
     '[
         {"key":"district","name":"行政區"},
         {"key":"location_text","name":"地點"},
@@ -53,6 +53,16 @@ SET map_config_ids = CASE
 END
 WHERE index = 'speeding_casualty_district'
     AND city = 'taipei';
+
+-- 同時保證 metrotaipei query_chart 的 map_config_ids 也含 5031（修復雙北 toggle）
+UPDATE public.query_charts
+SET map_config_ids = CASE
+        WHEN map_config_ids @> ARRAY[5031]::integer[] THEN map_config_ids
+        WHEN map_config_ids IS NULL THEN ARRAY[5031]::integer[]
+        ELSE array_append(map_config_ids, 5031)
+END
+WHERE index = 'speeding_casualty_district'
+    AND city = 'metrotaipei';
 
 -- ── 3. 移除獨立點位圖表 metadata ──────────────────────────────────────────────
 UPDATE public.dashboards
