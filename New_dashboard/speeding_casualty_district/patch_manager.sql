@@ -82,16 +82,25 @@ SELECT
     NULL, 'taipei';
 
 -- ── 4. dashboards ─────────────────────────────────────────────────────────────
-UPDATE public.dashboards
-SET index = 'speeding_casualty_metrotaipei',
-    name = '超速傷亡事故',
-    icon = 'warning',
-    updated_at = '2026-05-03 00:00:00+00',
-    components = CASE
-        WHEN components @> ARRAY[301]::integer[] THEN components
-        ELSE array_prepend(301, COALESCE(components, ARRAY[]::integer[]))
-    END
-WHERE id = 501;
+INSERT INTO public.dashboards (id, index, name, components, icon, updated_at, created_at)
+VALUES (
+    501,
+    'speeding_casualty_metrotaipei',
+    '超速傷亡事故',
+    ARRAY[301]::integer[],
+    'warning',
+    '2026-05-03 00:00:00+00',
+    '2026-05-03 00:00:00+00'
+)
+ON CONFLICT (id) DO UPDATE SET
+    index = EXCLUDED.index,
+    name = EXCLUDED.name,
+    icon = EXCLUDED.icon,
+    updated_at = EXCLUDED.updated_at,
+    components = array_append(
+        array_remove(public.dashboards.components, 301),
+        301
+    );
 
 -- ── 5. dashboard_groups ───────────────────────────────────────────────────────
 INSERT INTO public.dashboard_groups (dashboard_id, group_id)
