@@ -268,12 +268,6 @@ function returnChartComponent(name, svg) {
             <span v-if="config.map_config && config.map_config[0]">map</span>
             <span v-if="config.history_config?.range">insights</span>
           </div>
-          <ComponentTag
-            v-if="config.index === 'speeding_casualty_district' && activeCity === 'metrotaipei'"
-            icon=""
-            text="僅含死亡案件"
-            mode="small"
-          />
         </h3>
         <p v-if="mode === 'preview'">
           {{ props.config.short_desc }}

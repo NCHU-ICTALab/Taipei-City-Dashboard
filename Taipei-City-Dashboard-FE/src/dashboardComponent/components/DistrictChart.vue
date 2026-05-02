@@ -284,7 +284,7 @@ function handleDataSelection(index) {
 <template>
   <div
     v-if="activeChart === 'DistrictChart'"
-    :class="['districtchart', { 'districtchart--bottom-title': chart_config?.index === 'speeding_casualty_district' }]"
+    class="districtchart"
   >
     <div class="districtchart-title">
       <h5>{{ props.series.length === 1 ? '平均' : '總合' }}</h5>
@@ -1337,24 +1337,6 @@ function handleDataSelection(index) {
 			pointer-events: none;
 			min-width: min-content;
 			white-space: nowrap;
-		}
-	}
-
-	&--bottom-title {
-		.districtchart-chart {
-			max-height: calc(100% - 5rem);
-
-			svg {
-				max-height: 100%;
-				max-width: 100%;
-			}
-		}
-
-		.districtchart-title {
-			top: auto;
-			bottom: 0;
-			margin: 0 0 0.5rem;
-			z-index: 5;
 		}
 	}
 }
