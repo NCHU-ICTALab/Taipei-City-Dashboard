@@ -2016,7 +2016,11 @@ export const useMapStore = defineStore("map", {
 					this.deckGlLayer[mapLayerId].config.visible = false;
 					this.renderDeckGLLayer();
 				} else if (this.map.getLayer(mapLayerId)) {
-					this.map.setFilter(mapLayerId, null);
+					// 對 cluster-enabled 圖層保留原本的 ["!", ["has", "point_count"]] filter，
+					// 否則 toggle off→on 後，原 circle layer 會把 mapbox 合成的 cluster 中心點也畫出來。
+					if (clusterLayerIds.length === 0) {
+						this.map.setFilter(mapLayerId, null);
+					}
 					this.map.setLayoutProperty(
 						mapLayerId,
 						"visibility",
