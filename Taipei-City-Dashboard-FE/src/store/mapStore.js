@@ -727,6 +727,11 @@ export const useMapStore = defineStore("map", {
 			) {
 				config.filter = initialFilter;
 			}
+			// 原 circle 圖層先加，cluster bubble / count 後加 → cluster 永遠在上方，
+			// 防止個別點位坐落在 cluster centroid 附近時疊出「中央紅點」視覺。
+			if (clusteringEnabled) {
+				this.map.addLayer(config);
+			}
 			if (clusteringEnabled) {
 				const clusterLayerId = `${map_config.layerId}-cluster`;
 				const clusterCountLayerId = `${map_config.layerId}-cluster-count`;
@@ -812,7 +817,9 @@ export const useMapStore = defineStore("map", {
 					this.map.getCanvas().style.cursor = "";
 				});
 			}
-			this.map.addLayer(config);
+			if (!clusteringEnabled) {
+				this.map.addLayer(config);
+			}
 			if (
 				map_config.layerId ===
 					"wee_hazard_water-fill-extrusion-metrotaipei" ||
