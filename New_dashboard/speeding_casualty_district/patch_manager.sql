@@ -24,7 +24,7 @@ ON CONFLICT (index) DO UPDATE SET
 
 -- ── 2. components ─────────────────────────────────────────────────────────────
 INSERT INTO public.components (id, index, name)
-VALUES (301, 'speeding_casualty_district', '超速事故行政區計數')
+VALUES (301, 'speeding_casualty_district', '超速死亡事故行政區計數')
 ON CONFLICT (id) DO UPDATE SET
     index = EXCLUDED.index,
     name = EXCLUDED.name;
