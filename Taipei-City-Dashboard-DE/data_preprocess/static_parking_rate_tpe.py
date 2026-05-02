@@ -1117,6 +1117,21 @@ def _smoke_test_helpers(with_network: bool = False) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="雙北路邊停車費率資料管線")
+    # Pipeline flags
+    parser.add_argument("--sources", nargs="+", choices=["ntpc", "tpe"],
+                        default=["ntpc", "tpe"],
+                        help="哪些來源要跑（預設兩者皆跑）")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只跑 crawl + preprocess + geocode，不寫入 DB")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="處理前 N 筆（debug 用）")
+    parser.add_argument("--csv-path", type=str, default=str(CSV_DEFAULT_PATH),
+                        help=f"CSV checkpoint 路徑（預設 {CSV_DEFAULT_PATH}）")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="不從 CSV 接續，重新跑全部（會覆蓋 CSV）")
+    parser.add_argument("--from-csv", type=str, default=None,
+                        help="跳過 crawl + preprocess + geocode，直接從指定 CSV 載入並寫入 DB")
+    # Debug / smoke flags
     parser.add_argument("--smoke-test", action="store_true",
                         help="Run inline helper smoke tests and exit.")
     parser.add_argument("--with-network", action="store_true",
@@ -1125,6 +1140,7 @@ if __name__ == "__main__":
                         help="Smoke-test save_to_postgres (writes 1 fake row + verify + exit).")
     args = parser.parse_args()
 
+    # ── Debug shortcuts ──────────────────────────────────────────────────────
     if args.smoke_test:
         _smoke_test_helpers(with_network=args.with_network)
         raise SystemExit(0)
@@ -1157,4 +1173,62 @@ if __name__ == "__main__":
         log.info("[OK] save_to_postgres smoke test passed.")
         raise SystemExit(0)
 
-    print("[NOOP] Full pipeline implemented in Task 9 onward.")
+    # ── --from-csv shortcut: skip crawl/preprocess/geocode entirely ──────────
+    if args.from_csv:
+        csv_in = Path(args.from_csv)
+        if not csv_in.exists():
+            log.error("[錯誤] --from-csv 指定的檔案不存在：%s", csv_in)
+            raise SystemExit(1)
+        log.info("=" * 60)
+        log.info("Parking Rate Pipeline | from_csv=%s dry_run=%s", csv_in, args.dry_run)
+        log.info("=" * 60)
+        records = load_csv_records(csv_in)
+        log.info("[CSV] loaded %d records from %s", len(records), csv_in)
+        if not records:
+            log.error("[錯誤] CSV 為空，未動 DB，結束。")
+            raise SystemExit(1)
+        if args.dry_run:
+            log.info("[DRY-RUN] %d 筆已備妥（未寫入 DB）", len(records))
+            raise SystemExit(0)
+        save_to_postgres(records)
+        log.info("=" * 60)
+        log.info("完成！%d 筆寫入 parking_rate_tpe", len(records))
+        log.info("=" * 60)
+        raise SystemExit(0)
+
+    # ── Full pipeline ────────────────────────────────────────────────────────
+    csv_path = Path(args.csv_path)
+    log.info("=" * 60)
+    log.info(
+        "Parking Rate Pipeline | sources=%s dry_run=%s limit=%s csv=%s resume=%s",
+        args.sources, args.dry_run, args.limit, csv_path, not args.no_resume,
+    )
+    log.info("=" * 60)
+
+    rows: list[dict] = []
+    if "ntpc" in args.sources:
+        rows.extend(crawl_ntpc())
+    if "tpe" in args.sources:
+        rows.extend(crawl_tpe())
+    if not rows:
+        log.error("[錯誤] 兩個來源都失敗，未動 DB，結束。")
+        raise SystemExit(1)
+
+    records = preprocess(rows)
+    if args.limit:
+        records = records[: args.limit]
+        log.info("[限制] --limit %d 套用後剩 %d 筆", args.limit, len(records))
+
+    geocoded = geocode_all(records, csv_path=csv_path, resume=not args.no_resume)
+    if not geocoded:
+        log.error("[錯誤] geocode 後無有效資料，未動 DB，結束。")
+        raise SystemExit(1)
+
+    if args.dry_run:
+        log.info("[DRY-RUN] %d 筆已備妥（未寫入 DB；CSV 已寫入 %s）", len(geocoded), csv_path)
+        raise SystemExit(0)
+
+    save_to_postgres(geocoded)
+    log.info("=" * 60)
+    log.info("完成！%d 筆寫入 parking_rate_tpe", len(geocoded))
+    log.info("=" * 60)
