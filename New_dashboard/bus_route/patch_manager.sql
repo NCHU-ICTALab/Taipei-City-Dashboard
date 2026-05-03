@@ -26,6 +26,7 @@ ON CONFLICT (index) DO NOTHING;
 
 
 -- ── 2. components ─────────────────────────────────────────────────────────────
+DELETE FROM public.components WHERE index = 'bus_route' AND id != 1302;
 INSERT INTO public.components (id, index, name)
 VALUES (1302, 'bus_route', '公車路線站點圖')
 ON CONFLICT (id) DO NOTHING;
@@ -93,6 +94,13 @@ WHERE NOT EXISTS (
 
 
 -- ── 4. dashboards ─────────────────────────────────────────────────────────────
+DELETE FROM public.dashboard_groups
+WHERE dashboard_id IN (
+    SELECT id FROM public.dashboards
+    WHERE index IN ('bus_route_tpe', 'bus_route_newtpe') AND id NOT IN (1372, 1373)
+);
+DELETE FROM public.dashboards
+WHERE index IN ('bus_route_tpe', 'bus_route_newtpe') AND id NOT IN (1372, 1373);
 INSERT INTO public.dashboards (id, index, name, components, icon, updated_at, created_at)
 VALUES
     (1372, 'bus_route_tpe',    '公車路線查詢', '{1302}', 'directions_bus',

@@ -20,8 +20,9 @@ ON CONFLICT (index) DO NOTHING;
 
 
 -- ── 2. components ─────────────────────────────────────────────────────────────
+DELETE FROM public.components WHERE index = 'bus_transfer' AND id != 1303;
 INSERT INTO public.components (id, index, name)
-VALUES (303, 'bus_transfer', '公車轉乘查詢')
+VALUES (1303, 'bus_transfer', '公車轉乘查詢')
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -76,14 +77,21 @@ WHERE NOT EXISTS (
 
 
 -- ── 4. dashboards ─────────────────────────────────────────────────────────────
+DELETE FROM public.dashboard_groups
+WHERE dashboard_id IN (
+    SELECT id FROM public.dashboards
+    WHERE index IN ('bus_transfer_tpe', 'bus_transfer_newtpe') AND id NOT IN (1374, 1375)
+);
+DELETE FROM public.dashboards
+WHERE index IN ('bus_transfer_tpe', 'bus_transfer_newtpe') AND id NOT IN (1374, 1375);
 INSERT INTO public.dashboards (id, index, name, components, icon, updated_at, created_at)
 VALUES
-    (374, 'bus_transfer_tpe',    '公車轉乘規劃', '{303}', 'directions_transit', '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00'),
-    (375, 'bus_transfer_newtpe', '公車轉乘規劃', '{303}', 'directions_transit', '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00')
+    (1374, 'bus_transfer_tpe',    '公車轉乘規劃', '{1303}', 'directions_transit', '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00'),
+    (1375, 'bus_transfer_newtpe', '公車轉乘規劃', '{1303}', 'directions_transit', '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00')
 ON CONFLICT (id) DO NOTHING;
 
 
 -- ── 5. dashboard_groups ───────────────────────────────────────────────────────
 INSERT INTO public.dashboard_groups (dashboard_id, group_id)
-VALUES (374, 2), (375, 3)
+VALUES (1374, 2), (1375, 3)
 ON CONFLICT DO NOTHING;

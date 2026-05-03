@@ -737,6 +737,7 @@ function activateTransferGroup(comboKey) {
 	border: 1px solid rgba(71, 89, 110, 0.3);
 	border-radius: 12px;
 	padding: 12px;
+	overflow:visible;
 }
 
 .btc-loading {
