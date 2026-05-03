@@ -27,7 +27,7 @@ ON CONFLICT (index) DO NOTHING;
 
 -- ── 2. components ─────────────────────────────────────────────────────────────
 INSERT INTO public.components (id, index, name)
-VALUES (302, 'bus_route', '公車路線站點圖')
+VALUES (1302, 'bus_route', '公車路線站點圖')
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -95,9 +95,9 @@ WHERE NOT EXISTS (
 -- ── 4. dashboards ─────────────────────────────────────────────────────────────
 INSERT INTO public.dashboards (id, index, name, components, icon, updated_at, created_at)
 VALUES
-    (372, 'bus_route_tpe',    '公車路線查詢', '{302}', 'directions_bus',
+    (1372, 'bus_route_tpe',    '公車路線查詢', '{1302}', 'directions_bus',
      '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00'),
-    (373, 'bus_route_newtpe', '公車路線查詢', '{302}', 'directions_bus',
+    (1373, 'bus_route_newtpe', '公車路線查詢', '{1302}', 'directions_bus',
      '2025-01-01 00:00:00+00', '2025-01-01 00:00:00+00')
 ON CONFLICT (id) DO NOTHING;
 
@@ -105,5 +105,5 @@ ON CONFLICT (id) DO NOTHING;
 -- ── 5. dashboard_groups ───────────────────────────────────────────────────────
 -- group 2 = taipei（臺北市）、group 3 = metrotaipei（雙北）
 INSERT INTO public.dashboard_groups (dashboard_id, group_id)
-VALUES (372, 2), (373, 3)
+VALUES (1372, 2), (1373, 3)
 ON CONFLICT DO NOTHING;

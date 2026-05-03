@@ -105,7 +105,8 @@ const activeCity = computed({
 });
 
 const hasCustomChart = computed(() =>
-	props.config.chart_config?.types?.includes("BusTransferChart"),
+	props.config.chart_config?.types?.includes("BusTransferChart") ||
+	props.config.chart_config?.types?.includes("BusRouteChart"),
 );
 
 const toggleOn = computed({
